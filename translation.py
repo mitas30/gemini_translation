@@ -70,6 +70,7 @@ def token_count(use_model_name:str,input_path:Path)->int:
     response=tokenizer.count_tokens(text)
     return response.total_tokens
 
+#TODO: 2.0はlong contextが弱いので、いい感じの場所で文章を区切れるようなしくみを導入すること
 def translate_text(model:GenerativeModel,save_folder:Path,input_md_path:Path,is_free:bool):
     """input_md_pathのテキストを翻訳し、save_folder以下に保存する。
 
@@ -126,7 +127,8 @@ def translate_folder(use_model:str,save_folder:Path,input_folder:Path,is_free=Tr
                 continue
         translate_text(model,save_folder,input_md_path,is_free)
     print(f"{input_folder}内の全ての翻訳が完了しました。")
-    
+
+#TODO: 現在のmodelを2.0-flashに固定して最適化すること
 if __name__ == "__main__":
     use_model="1.5_pro"
     data_folder=Path(__file__).parent / "data"
