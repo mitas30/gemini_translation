@@ -30,7 +30,7 @@ def do_first_chat(chat:ChatSession,sf_path:Path,text:str)->tuple[float,int,int]:
 def do_repeat_chat(chat:ChatSession,sf_path:Path)->tuple[float,int,int]:
     st=time.time()
     response = chat.send_message(f"あなたは優れた翻訳者です。以前の人が翻訳してくれた部分を見て、続きを翻訳してください。\nただし、もし前の人で全文の翻訳が完了している場合は、「completed」とだけ返信してください。")
-    if len(response.text) < 20:
+    if len(response.text) < 1000:
         print("翻訳が完了しました。")
         return None
     with open(sf_path,'a') as f:
@@ -72,9 +72,9 @@ def translate_text(model:GenerativeModel,save_folder:Path,input_md_path:Path):
     print(f"{input_md_path.name}の翻訳が完了しました。")
     
 if __name__ == "__main__":
-    model=setup_genai(use_model="1.5_pro")
+    model=setup_genai(use_model="2.0_flash")
     data_folder=Path(__file__).parent / "data"
-    input_md_path = data_folder / "output_md" / "part4_thought/ch21_Problem Solving.md"
-    save_folder=data_folder / "output" / "part4_thought/ch21_Problem Solving.md"
+    input_md_path = data_folder / "output_md/tracer.md"
+    save_folder=data_folder / "output" / "tracer.md"
     save_folder.mkdir(parents=True,exist_ok=True)
     translate_text(model,save_folder,input_md_path)
