@@ -6,38 +6,50 @@ import os,json,time
 from pathlib import Path
 from typing import Literal
 
-def do_first_chat(chat:ChatSession,sf_path:Path,text:str)->tuple[float,int,int]:
+def do_first_chat(chat:ChatSession,text:str)->tuple[str,float,int,int]:
     """最初のチャットを行い、翻訳者の能力を確認する。
 
     Args:
         chat (ChatSession): _description_
-        sf_path (Path): _description_
         text (str): 翻訳対象のテキスト
 
     Returns:
-        tuple[float,int,int]: 
+        tuple[str,float,int,int]: 
+        - translated_md: 翻訳されたテキスト
         - take_time: チャットにかかった時間
         - prompt_token_count: プロンプトのトークン数
         - candidates_token_count: 返信のトークン数
     """
     st=time.time()
     response=chat.send_message(f"あなたは優れた翻訳者です。これから英語の長文を送るので、できるだけ長く日本語に翻訳してください。\n一度に翻訳できなくても、何回かに分けて完全な翻訳を作成する予定なので、あなたは端折らずに翻訳してください。\nまた、元のmdと同じ構成を保って出力することを心がけてください。\n\n<翻訳対象>\n{text}")
-    with open(sf_path,'x') as f:
-        f.write(response.text+'\n')
+    translated_md=response.text
     take_time=time.time()-st
     usage = response.usage_metadata
-    return take_time,usage.prompt_token_count,usage.candidates_token_count 
+    return translated_md,take_time,usage.prompt_token_count,usage.candidates_token_count 
 
-def do_repeat_chat(chat:ChatSession,sf_path:Path)->tuple[float,int,int]:
+def do_repeat_chat(chat:ChatSession)->tuple[str,float,int,int,bool]:
+    """2回目以降のチャットで続きの翻訳を行う。
+
+    Args:
+        chat (ChatSession): _description_
+
+    Returns:
+        tuple[str,float,int,int,bool]:
+        - translated_md: 翻訳されたテキスト
+        - take_time: チャットにかかった時間
+        - prompt_token_count: プロンプトのトークン数
+        - candidates_token_count: 返信のトークン数
+        - is_completed: 翻訳が完了したかどうか
+    """
     st=time.time()
     response = chat.send_message(f"あなたは優れた翻訳者です。以前の人が翻訳してくれた部分を見て、続きを翻訳してください。\nただし、もし前の人で全文の翻訳が完了している場合は、「completed」とだけ返信してください。")
-    if len(response.text) < 1000:
+    usage = response.usage_metadata
+    translated_text=response.text
+    is_completed=False
+    if usage.candidates_token_count < 100:
         print("翻訳が完了しました。")
-        return None
-    with open(sf_path,'a') as f:
-        f.write(response.text+'\n')
-    usage = response.usage_metadata      
-    return time.time()-st,usage.prompt_token_count,usage.candidates_token_count
+        is_completed=True
+    return translated_text,time.time()-st,usage.prompt_token_count,usage.candidates_token_count,is_completed
 
 def setup_genai(use_model:Literal["1.5_flash","1.5_pro","2.0_flash"]):
     load_dotenv()
@@ -71,68 +83,142 @@ def token_count(use_model_name:str,input_path:Path)->int:
     return response.total_tokens
 
 #TODO: 2.0はlong contextが弱いので、いい感じの場所で文章を区切れるようなしくみを導入すること
-def translate_text(model:GenerativeModel,save_folder:Path,input_md_path:Path,is_free:bool):
+def translate_text(model:GenerativeModel,input_md:str)->str:
     """input_md_pathのテキストを翻訳し、save_folder以下に保存する。
 
     Args:
         model (GenerativeModel): _description_
         save_folder (Path): _description_
         input_md_path (Path): _description_
-        is_free (bool): apiは無料枠を使っているかどうか
     """
-    print(f"{input_md_path.name}の翻訳を開始します。")
+    transltaed_md=""
+    print(f"1回目のチャットを開始します。")
     chat = model.start_chat()
-    with open(input_md_path,'r') as f:
-        text = f.read()
-    sf_path=save_folder / input_md_path.name
-    response_info=do_first_chat(chat,sf_path,text)
-    print(f"最初のチャットにかかった時間: {response_info[0]:.2f}秒\n 出力トークン数: {response_info[2]}")
-    if model._model_name=="models/gemini-1.5-pro" and is_free:
-        print("使用料制限により60秒待機します。")
-        time.sleep(60)
+    response_info=do_first_chat(chat,input_md)
+    transltaed_md+=response_info[0]
+    print(f"最初のチャットにかかった時間: {response_info[1]:.2f}秒\n 出力トークン数: {response_info[3]}")
     for i in range(10):
         print(f"{i+2}回目のチャットを開始します。")
-        res=do_repeat_chat(chat,sf_path)
-        if res is None:
+        res=do_repeat_chat(chat)
+        transltaed_md+=res[0]
+        print(f"{i+2}回目のチャットにかかった時間: {res[1]:.2f}秒\n 出力トークン数: {res[3]}")
+        if res[4]:
             break
-        print(f"{i+2}回目のチャットにかかった時間: {res[0]:.2f}秒\n 出力トークン数: {res[2]}")
-        if model._model_name=="models/gemini-1.5-pro" and is_free:
-            print("使用料制限により60秒待機します。")
-            time.sleep(60)
-    print(f"{input_md_path.name}の翻訳が完了しました。")
-    
-def translate_folder(use_model:str,save_folder:Path,input_folder:Path,is_free=True):
-    """input_folder以下のテキストを翻訳し、save_folder以下に保存する。
-    
-    ある程度のロングコンテキストに強いgemini-1.5-proをおすすめする。
+    return transltaed_md
+
+# ─────────────────────────────
+# ヘルパー関数: Markdown のテキストを約 max_words 単語ごとに分割する
+def split_md_text(md_text: str, max_words: int) -> list[str]:
+    """
+    Markdown の文字列を、段落ごとに区切りながら
+    約 max_words 単語になるように分割し、セグメントのリストを返す。
 
     Args:
-        use_model (str): _description_
-        save_folder (Path): _description_
-        input_folder (Path): _description_
-        is_free (bool): apiは無料枠を使っているかどうか
+        md_text (str): 分割対象の Markdown 文字列
+        max_words (int): 1セグメントあたりの最大単語数の目安
+
+    Returns:
+        list[str]: 分割されたテキストのリスト
+    """
+    # 改行2つで段落ごとに分割
+    paragraphs = md_text.split("\n\n")
+    segments = []
+    current_segment = ""
+    current_word_count = 0
+
+    for para in paragraphs:
+        # 段落内の単語数を数える
+        word_count = len(para.split())
+        # もし現在のセグメントにこの段落を加えると max_words を超えてしまい、かつすでに何らかのテキストがあるなら…
+        if current_segment and (current_word_count + word_count > max_words):
+            segments.append(current_segment)
+            # 新たなセグメントの開始
+            current_segment = para
+            current_word_count = word_count
+        else:
+            # まだセグメントに追加できる場合
+            if current_segment:
+                current_segment += "\n\n" + para
+            else:
+                current_segment = para
+            current_word_count += word_count
+
+    # 最後のセグメントを追加
+    if current_segment:
+        segments.append(current_segment)
+
+    return segments
+
+# ─────────────────────────────
+# 必要に応じて、Markdown ファイルを読み込んで分割する関数
+def split_markdown_file(md_path: Path, max_words: int=4000) -> list[str]:
+    """
+    指定された Markdown ファイルを読み込み、内容を分割してリストとして返す。
+
+    Args:
+        md_path (Path): 対象の Markdown ファイルパス
+        max_words (int): 1セグメントあたりの最大単語数の目安
+
+    Returns:
+        list[str]: 分割されたテキストのリスト
+    """
+    with md_path.open("r", encoding="utf-8") as f:
+        md_text = f.read()
+    return split_md_text(md_text, max_words=max_words)
+
+def translate_folder(use_model: str, save_folder: Path, input_folder: Path):
+    """
+    input_folder 以下の Markdown ファイルを翻訳し、save_folder 以下に保存する。
+    ただし、トークン数が多い（10000 を超える）場合はファイル内容を分割して、
+    分割された各セグメントごとに翻訳を実施します。
+
+    Args:
+        use_model (str): 利用するモデル名など
+        save_folder (Path): 翻訳結果の保存先フォルダ
+        input_folder (Path): 入力 Markdown ファイルが存在するフォルダ
     """
     for input_md_path in input_folder.glob("*.md"):
-        output_md_path=save_folder / input_md_path.name
+        output_md_path = save_folder / input_md_path.name
         if output_md_path.exists():
             print(f"{output_md_path.name}はすでに存在します。")
             continue
-        model=setup_genai(use_model)
-        input_tokens=token_count(model._model_name,input_md_path)
-        print(f"input_tokens: {input_tokens}")
-        if input_tokens>10000:
-            print(f"{input_md_path.name}のトークン数が10000を超えていますが大丈夫ですか？ y or n")
-            ans=input()
-            if ans=="n":
-                continue
-        translate_text(model,save_folder,input_md_path,is_free)
-    print(f"{input_folder}内の全ての翻訳が完了しました。")
+
+        model = setup_genai(use_model)
+        # ※ token_count はモデルとファイルパスからトークン数を計測する既存関数と仮定
+        input_tokens = token_count(model._model_name, input_md_path)
+        print(f"{input_md_path.name} の input_tokens: {input_tokens}")
+
+        # トークン数が多い場合は自動的に内容を分割する
+        if input_tokens > 5000: 
+            print(f"{input_md_path.name} のトークン数が 5000 を超えているため、内容を分割します。")
+            segments = split_markdown_file(input_md_path)
+            print(f"分割結果: {len(segments)} 個のセグメントに分割されました。")
+            # 各セグメントごとに翻訳を実施（必要に応じて適宜実装してください）
+            translated_segments = []
+            for i, segment in enumerate(segments):
+                print(f"セグメント {i+1} を翻訳中...")
+                translated_segment = translate_text(model, segment)
+                translated_segments.append(translated_segment)
+            # セグメント間は「---」で区切って結合
+            final_translated_text = "\n\n---\n\n".join(translated_segments)
+            # 翻訳結果を保存
+            with output_md_path.open("w", encoding="utf-8") as f:
+                f.write(final_translated_text)
+        else:
+            # トークン数が少ない場合は従来通りに翻訳
+            # ※ translate_text の実装が、ファイルパスから読み込んで翻訳する場合はそのままでOKです。
+            with input_md_path.open("r", encoding="utf-8") as f:
+                text = f.read()
+            translated_text = translate_text(model, text)
+            with output_md_path.open("w", encoding="utf-8") as f:
+                f.write(translated_text)
+    print(f"{input_folder} 内の全ての翻訳が完了しました。")
+
 
 #TODO: 現在のmodelを2.0-flashに固定して最適化すること
 if __name__ == "__main__":
-    model=setup_genai(use_model="2.0_flash")
-    use_model="1.5_pro"
+    use_model="2.0_flash"
     data_folder=Path(__file__).parent / "data"
-    input_folder = data_folder / "input/deep_utopia/part5"
-    save_folder=data_folder / "output/deep_utopia/part5"
+    input_folder = data_folder / "input/deep_utopia"
+    save_folder=data_folder / "output/deep_utopia"
     translate_folder(use_model,save_folder,input_folder)
