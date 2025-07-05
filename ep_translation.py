@@ -1,28 +1,32 @@
 """ 翻訳タスクを行うスクリプト
 """
 
-from translation import GemminiTranslator, GPTTranslator
+from translation import GPTTranslator
 from argparse import ArgumentParser
 from pathlib import Path
 import asyncio
 
+# ? inputは、markdown形式のファイルを想定している
 if __name__ == "__main__":
     
     parser = ArgumentParser()
-    parser.add_argument("--use_model", type=str,required=True,choices=["gemini","gpt"] )
+    parser.add_argument("-M","--use_model", type=str,required=True,choices=["gemini","gpt"] )
+    parser.add_argument("-F","--target_data_folder",type=Path,help="data/inputフォルダ以下の処理したい相対フォルダパスを入力してください。",default=Path("tmp"))
     
     args=parser.parse_args()
     
     data_folder=Path(__file__).parent / "data"
-    target_folder = ""
-    input_folder = data_folder / f"input/deep_work"
-    save_folder=data_folder / f"output/deep_work"
+    input_folder = data_folder / Path("input") / args.target_data_folder
+    save_folder=data_folder / Path("output") / args.target_data_folder
     save_folder.mkdir(parents=True,exist_ok=True)
-    gpt_model="o3-mini"
+    # ? o4-miniは文章のチェックが厳しいためo3-miniを使用
+    gpt_model="o3-mini-2025-01-31"
+    gemini_model="2.0_pro"
     
     if args.use_model=="gemini":
-        translator=GemminiTranslator(use_model="2.0_pro")
-        translator.translate_folder(save_folder,input_folder)
+        print("Gemini model is not implemented yet.")
+        #translator=GemminiTranslator(use_model=gemini_model)
+        #translator.translate_folder(save_folder,input_folder)
     elif args.use_model=="gpt":
-        translator=GPTTranslator(use_model="o3-mini")
+        translator=GPTTranslator(gpt_model)
         asyncio.run(translator.translate_folder(save_folder, input_folder))

@@ -1,6 +1,3 @@
-import google.generativeai as genai
-from google.generativeai import GenerativeModel,ChatSession
-from vertexai.preview.tokenization import get_tokenizer_for_model
 from dotenv import load_dotenv
 import os,json,time,re,asyncio
 from pathlib import Path
@@ -8,10 +5,10 @@ from typing import Literal
 from openai import AsyncOpenAI,OpenAI
 import tiktoken
 
+'''
 class GemminiTranslator:
     """Gemminiを使って翻訳を行うクラス
     """
-    # TODO: 2.5_proを追加する
     def __init__(self,
                  use_model:Literal["1.5_flash","1.5_pro","2.0_flash","2.0_pro"])->GenerativeModel:
         load_dotenv()
@@ -134,6 +131,7 @@ class GemminiTranslator:
         take_time=time.time()-st
         usage = response.usage_metadata
         return translated_md,take_time,usage.prompt_token_count,usage.candidates_token_count 
+'''    
     
 class GPTTranslator:
     """GPTを使って翻訳を行うクラス
@@ -167,9 +165,10 @@ class GPTTranslator:
             else:
                 with input_md_path.open("r", encoding="utf-8") as f:
                     text = f.read()
-                final_text = await self.translate_text(text)
+                final_text = await self.translate_text(0,text)
 
             with output_md_path.open("w", encoding="utf-8") as f:
+                print(f"翻訳結果を{output_md_path.name}に保存します。")
                 f.write(final_text)
 
         print(f"{input_folder} 内の全ての翻訳が完了しました。")
@@ -199,7 +198,7 @@ class GPTTranslator:
         """output_tokenが上限を超えているかを確認する。
         """
         max_output_token=15000
-        if self.use_model =="o3-mini" or self.use_model=="o4-mini-2025-04-16":
+        if self.use_model =="o3-mini-2025-01-31" or self.use_model=="o4-mini-2025-04-16":
             max_output_token=100000
 
         if output_len> max_output_token:
@@ -210,8 +209,8 @@ class GPTTranslator:
                     {
                         "role": "developer",
                         "content": (
-                            "あなたは優れた翻訳者です。これから英語の長文を送るので、"
-                            "全文を自然な日本語に翻訳してください。ただし、翻訳結果の日本語文章のみを出力してください。\n"
+                            "あなたは優れた翻訳者です。これから英語の長文を送るので、与えられたすべての文章を自然な日本語に翻訳してください。\n"
+                            "ただし、絶対に翻訳結果の日本語文章のみを出力してください。\n"
                             "また、元のマークダウンと同じ構成を保って出力することを心がけてください。"
                         ),
                     },
@@ -220,6 +219,7 @@ class GPTTranslator:
         try:
             completion = await self.client.chat.completions.create(
                 model=self.use_model,
+                reasoning_effort="high",
                 messages=messages,
             )
         except Exception as e:

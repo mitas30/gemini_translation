@@ -1,4 +1,9 @@
-"""内容をなるべく壊さずに、docxファイルとMarkdownファイルの相互変換を行うスクリプト。
+"""文書ファイルとMarkdownファイルの相互変換を行う。
+
+現在想定している文書ファイルは、.docx形式のwordファイルと.epub形式のファイル。
+
+Note:
+    - pdf形式は、自動で変換することが難しいため、wordから開いてdocx形式に変換して保存してほしい。
 """
 
 import subprocess
@@ -74,15 +79,58 @@ def convert_all_markdown_files_to_docx_in_folder(folder: Path):
         output_file = md_file.with_suffix('.docx')
         print(f"変換開始: {md_file} → {output_file}")
         convert_markdown_to_docx(md_file, output_file)
-    
 
+class EpubToMarkdownConverter:
+    def __init__(self,processing_folder: Path):
+        self.processing_folder = processing_folder
+        
+    def convert_all_epub_files_to_markdown_in_folder(self):
+        """指定フォルダ以下のすべての.epubファイルをMarkdown形式に変換。
+
+        各epubファイルは同一ディレクトリに拡張子を.mdに変更したファイルとして出力されます。
+        """
+        for epub_file in self.processing_folder.rglob("*.epub"):
+            output_file = epub_file.with_suffix('.md')
+            print(f"変換開始: {epub_file} → {output_file}")
+            self._convert_epub_to_markdown(epub_file, output_file)
+
+    def _convert_epub_to_markdown(self,input_file: Path, output_md: Path)->None:
+        """EPUB を Markdown に変換する
+
+        この関数は、EPUBファイルをMarkdown形式に変換します。
+
+        Args:
+            input_file (Path): 入力となるEPUBファイルのパス
+            output_md (Path): 出力となるMarkdownファイルのパス。
+        """
+        workdir = output_md.parent
+        media_dir = f"{output_md.stem}_media"
+        cmd = [
+            "pandoc",
+            str(input_file),
+            "--from=epub",
+            "--to=markdown+pipe_tables+grid_tables",
+            "--wrap=preserve",
+            f"--extract-media={media_dir}",
+            "-o", output_md.name
+        ]
+        subprocess.run(cmd, check=True, cwd=workdir)
+        print(f"EPUB→Markdown 完了: {output_md} (+ {media_dir}/)")
+    
 if __name__ == "__main__":
     parser=argparse.ArgumentParser(description="Convert DOCX to Markdown")
-    parser.add_argument("--mode", type=str, choices=["docx2md", "md2docx"], help="Conversion mode",required=True)
-    target_folder= Path(__file__).parent / "data/input/deep_work"
+    parser.add_argument("-M","--mode", type=str, choices=["docx2md", "md2docx","epub2md"], help="変換モードの決定",required=True)
+    parser.add_argument("-F","--target_data_folder",type=Path,help="dataフォルダ以下の処理したい相対フォルダパスを入力してください。",default=Path("input/tmp"))                     
+    
     args=parser.parse_args()
+    target_folder= Path(__file__).parent/ "data" / args.target_data_folder
+    
     if args.mode=="docx2md":
         convert_all_docx_files_to_markdown_in_folder(target_folder)
     elif args.mode=="md2docx":
         convert_all_markdown_files_to_docx_in_folder(target_folder)
+    elif args.mode=="epub2md":
+        converter = EpubToMarkdownConverter(target_folder)
+        converter.convert_all_epub_files_to_markdown_in_folder()
+        
     print(f"{target_folder} の変換が完了しました。")
