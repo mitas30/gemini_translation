@@ -118,7 +118,7 @@ class EpubToMarkdownConverter:
         print(f"EPUB→Markdown 完了: {output_md} (+ {media_dir}/)")
     
 if __name__ == "__main__":
-    parser=argparse.ArgumentParser(description="Convert DOCX to Markdown")
+    parser=argparse.ArgumentParser(description="Convert file extensions")
     parser.add_argument("-M","--mode", type=str, choices=["docx2md", "md2docx","epub2md"], help="変換モードの決定",required=True)
     parser.add_argument("-F","--target_data_folder",type=Path,help="dataフォルダ以下の処理したい相対フォルダパスを入力してください。",default=Path("input/tmp"))                     
     
