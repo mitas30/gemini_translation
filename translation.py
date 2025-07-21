@@ -2,136 +2,165 @@ from dotenv import load_dotenv
 import os,json,time,re,asyncio
 from pathlib import Path
 from typing import Literal
-from openai import AsyncOpenAI,OpenAI
+from openai import AsyncOpenAI
 import tiktoken
+from google import genai
 
-'''
-class GemminiTranslator:
-    """Gemminiを使って翻訳を行うクラス
+class GeminiTranslator:
+    """
+    Geminiを使って非同期で翻訳を行うクラス (genai.Client 使用版)
     """
     def __init__(self,
-                 use_model:Literal["1.5_flash","1.5_pro","2.0_flash","2.0_pro"])->GenerativeModel:
-        load_dotenv()
-        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-        if use_model=="1.5_flash":
-            self.model = genai.GenerativeModel("gemini-1.5-flash")
-        elif use_model=="1.5_pro":
-            self.model = genai.GenerativeModel("gemini-1.5-pro")
-        elif use_model=="2.0_flash":
-            self.model = genai.GenerativeModel("gemini-2.0-flash-exp")
-        elif use_model=="2.0_pro":
-            self.model = genai.GenerativeModel("gemini-2.0-pro-exp-02-05")
-        else:
-            raise ValueError("use_modelが不正です。")
-
-    def translate_folder(self, save_folder: Path, input_folder: Path,split_words:int=4000):
+                 use_model: Literal["2.5-flash", "2.5-pro"]):
         """
-        input_folder 以下の Markdown ファイルを翻訳し、save_folder 以下に保存する。
-        ただし、ファイルの文字が多い場合はファイル内容を分割して、
-        分割された各セグメントごとに翻訳を実施します。
+        Args:
+            use_model (Literal): 使用するモデルを選択します。
+                - "2.5-flash": gemini-2.5-flash
+                - "2.5-pro": gemini-2.5-pro
+        """
+        load_dotenv()
+        # genai.Client() は自動的に環境変数 GEMINI_API_KEY または GOOGLE_API_KEY を読み込みます
+        self.client = genai.Client()
+
+        model_map = {
+            "2.5-flash": "gemini-2.5-flash",
+            "2.5-pro": "gemini-2.5-pro",
+        }
+        
+        self.model_name = model_map.get(use_model)
+        if not self.model_name:
+            raise ValueError(f"指定されたモデル '{use_model}' は不正です。")
+
+    def translate_folder(self, save_folder: Path, input_folder: Path, token_threshold: int = 15000, split_words: int = 4000):
+        """
+        input_folder 以下の Markdown ファイルを同期的に1つずつ翻訳し、save_folder 以下に保存する。
+        ファイルサイズが大きい場合は内容を分割し、そのセグメントのみを並列で翻訳処理を行う。
     
         Args:
             save_folder (Path): 翻訳結果の保存先フォルダ
             input_folder (Path): 入力 Markdown ファイルが存在するフォルダ
-            split_words (int): 1セグメントあたりの最大単語数の目安
+            token_threshold (int): ファイルを分割するか判断するためのトークン数のしきい値
+            split_words (int): ファイルを分割する際の、1セグメントあたりの最大単語数の目安
         """
-        for input_md_path in input_folder.glob("*.md"):
+        save_folder.mkdir(parents=True, exist_ok=True)
+        
+        # 処理するファイルをリスト化
+        md_files = list(input_folder.glob("*.md"))
+
+        for input_md_path in md_files:
             output_md_path = save_folder / input_md_path.name
             if output_md_path.exists():
-                print(f"{output_md_path.name}はすでに存在します。")
+                print(f"{output_md_path.name} はすでに存在します。スキップします。")
                 continue
-            
-            input_tokens = self.token_count(input_md_path)
-            print(f"{input_md_path.name} の input_tokens: {input_tokens}")
-    
-            # トークン数が多い場合は自動的に内容を分割する
-            # ? ただし、段落ごとの分割であり、段落は\n{2,}で区切られていると仮定する
-            if input_tokens > split_words: 
-                print(f"{input_md_path.name} のトークン数が {split_words} を超えているため、内容を分割します。")
+            # 各ファイルを同期的に処理するために asyncio.run を使用
+            asyncio.run(self._process_single_file(input_md_path, output_md_path, token_threshold, split_words))
 
-                seg_lens,segments = TextSplitter.split_markdown_file(input_md_path,split_words)
-                print(f"分割結果: {len(segments)} 個のセグメントに分割されました。")
+        print(f"{input_folder} 内の全ての翻訳が完了しました。")
+
+    async def _process_single_file(self, input_md_path: Path, output_md_path: Path, token_threshold: int, split_words: int):
+        """単一のファイルを処理する非同期ヘルパーメソッド"""
+        print(f"処理開始: {input_md_path.name}")
+        try:
+            # token_count は同期的メソッドなので await は不要
+            input_tokens = self.token_count(input_md_path)
+            print(f"{input_md_path.name} のトークン数: {input_tokens}")
+
+            if input_tokens > token_threshold: 
+                print(f"トークン数がしきい値 ({token_threshold}) を超えているため、内容を分割します。")
+                _, segments = TextSplitter.split_markdown_file(input_md_path, split_words)
+                print(f"分割結果: {len(segments)} 個のセグメント")
+                for i, seg in enumerate(segments):
+                    seg_len = len(seg.split())
+                    print(f"セグメント {i + 1} の単語数: {seg_len} 単語")
                 
-                translated_segments = []
-                for i, segment in enumerate(segments):
-                    print(f"セグメント {i+1} を翻訳中... 入力文書は{seg_lens[i]}単語")
-                    translated_segment = self.translate_text(segment)
-                    translated_segments.append(translated_segment)
-                # ? セグメント間は「----------」で区切って結合
+                # 各セグメントを並列翻訳
+                coros = [self.translate_text(i, seg) for i, seg in enumerate(segments)]
+                translated_segments = await asyncio.gather(*coros)
                 final_translated_text = "\n\n----------\n\n".join(translated_segments)
-                # 翻訳結果を保存
-                with output_md_path.open("w", encoding="utf-8") as f:
-                    f.write(final_translated_text)
             else:
                 with input_md_path.open("r", encoding="utf-8") as f:
                     text = f.read()
-                translated_text = self.translate_text(text)
-                with output_md_path.open("w", encoding="utf-8") as f:
-                    f.write(translated_text)
-        print(f"{input_folder} 内の全ての翻訳が完了しました。")
+                final_translated_text = await self.translate_text(0, text)
 
-    def token_count(self,input_path:Path)->int:
-        """input_pathのテキストのトークン数をカウントする。
+            with output_md_path.open("w", encoding="utf-8") as f:
+                f.write(final_translated_text)
+            print(f"保存完了: {output_md_path.name}")
+
+        except Exception as e:
+            print(f"エラー: {input_md_path.name} の処理中にエラーが発生しました: {e}")
+            raise
+
+
+    def token_count(self, input_path: Path) -> int:
+        """
+        指定されたテキストファイルのトークン数をカウントする。
 
         Args:
-            input_path (Path): token数をカウントするテキストのパス
+            input_path (Path): トークン数をカウントするテキストのパス
 
         Returns:
             int: トークン数
         """
-        use_model_name=self.model.model_name
-        if use_model_name=="models/gemini-1.5-pro":
-            use_model_name="gemini-1.5-pro-002"
-        elif use_model_name=="models/gemini-2.0-pro-exp-02-05" or "models/gemini-2.0-flash-exp" or "models/gemini-1.5-flash":
-            use_model_name="gemini-1.5-flash-002"
-        else:
-            raise ValueError("use_model_nameが不正です。")
-        tokenizer=get_tokenizer_for_model(use_model_name)
-        with open(input_path,'r') as f:
-            text=f.read()
-        response=tokenizer.count_tokens(text)
+        with input_path.open('r', encoding="utf-8") as f:
+            text = f.read()
+        response = self.client.models.count_tokens(
+            model=self.model_name,
+            contents=text
+        )
         return response.total_tokens
 
-    def translate_text(self,input_md:str)->str:
-        """input_md_pathのテキストを翻訳し、save_folder以下に保存する。
-
-        Args:
-            save_folder (Path): _description_
-            input_md_path (Path): _description_
+    async def translate_text(self, seg_idx: int, input_md: str) -> str:
         """
-        transltaed_md=""
-        print(f"翻訳を開始します。")
-        chat = self.model.start_chat()
-        response_info=self._translate(chat,input_md)
-        transltaed_md+=response_info[0]
-        print(f"翻訳にかかった時間: {response_info[1]:.2f}秒 output_tokens: {response_info[3]}")
-        use_model_name=self.model.model_name
-        model_info=genai.get_model(use_model_name)
-        if response_info[3]> model_info.output_token_limit:
-            raise ValueError(f"output_tokenが上限まで出力されている。")
-        return transltaed_md
-    
-    def _translate(self,chat:ChatSession,text:str)->tuple[str,float,int,int]:
-        """textを翻訳する。
+        単一のテキストセグメントを翻訳する。
 
         Args:
-            chat (ChatSession): _description_
+            seg_idx (int): セグメントのインデックス (ログ出力用)
+            input_md (str): 翻訳対象のMarkdown文字列
+
+        Returns:
+            str: 翻訳されたテキスト
+        """
+        print(f"セグメント {seg_idx + 1} の翻訳を開始...")
+        translated_md, take_time, _, candidates_tokens = await self._translate(input_md)
+        print(f"セグメント {seg_idx + 1} の翻訳が完了。所要時間: {take_time:.2f}秒, 出力トークン数: {candidates_tokens}")
+        
+        # 出力トークン数の上限チェック
+        model_info = self.client.models.get(model=f'models/{self.model_name}')
+        if candidates_tokens >= model_info.output_token_limit:
+            raise ValueError(f"出力トークンがモデルの上限 ({model_info.output_token_limit}) に達している可能性があります。")
+        
+        return translated_md
+    
+    async def _translate(self, text: str) -> tuple[str, float, int, int]:
+        """
+        Gemini API を呼び出してテキストを翻訳する内部メソッド。
+
+        Args:
             text (str): 翻訳対象のテキスト
 
         Returns:
-            tuple[str,float,int,int]: 
-            - translated_md: 翻訳されたテキスト
-            - take_time: チャットにかかった時間
-            - prompt_token_count: プロンプトのトークン数
-            - candidates_token_count: 返信のトークン数
+            tuple[str, float, int, int]: (翻訳結果, 処理時間, 入力トークン数, 出力トークン数)
         """
-        st=time.time()
-        response=chat.send_message(f"あなたは優れた翻訳者です。これから英語の長文を送るので、全文を自然な日本語に翻訳してください。\nまた、元のmdと同じ構成を保って出力することを心がけてください。\n\n<翻訳対象>\n{text}")
-        translated_md=response.text
-        take_time=time.time()-st
-        usage = response.usage_metadata
-        return translated_md,take_time,usage.prompt_token_count,usage.candidates_token_count 
-'''    
+        st = time.time()
+        prompt = (
+            "あなたは優れた翻訳者です。これから英語の長文を送るので、全文を自然な日本語に翻訳してください。\n"
+            "また、元のマークダウンと同じ構成を保って出力することを心がけてください。\n\n"
+            f"<翻訳対象>\n{text}"
+        )
+        
+        try:
+            response = await self.client.aio.models.generate_content(
+                model=self.model_name,
+                contents=prompt
+            )
+            translated_md = response.text
+            usage = response.usage_metadata
+            take_time = time.time() - st
+            return translated_md, take_time, usage.prompt_token_count, usage.candidates_token_count
+        except Exception as e:
+            print(f"Gemini APIの呼び出し中にエラーが発生しました: {e}")
+            raise
+
     
 class GPTTranslator:
     """GPTを使って翻訳を行うクラス
