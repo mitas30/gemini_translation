@@ -12,6 +12,7 @@ if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("-M","--use_model", type=str,required=True,choices=["gemini","gpt"] )
     parser.add_argument("-F","--target_data_folder",type=Path,help="data/inputフォルダ以下の処理したい相対フォルダパスを入力してください。",default=Path("tmp"))
+    parser.add_argument("-R","--rate_limit", type=int, help="1分間あたりのAPI呼び出し回数制限（デフォルト: Gemini=4, GPT=10）", default=None)
     
     args=parser.parse_args()
     
@@ -21,11 +22,13 @@ if __name__ == "__main__":
     save_folder.mkdir(parents=True,exist_ok=True)
     # ? o4-miniは文章のチェックが厳しいためo3-miniを使用
     gpt_model="o3-mini-2025-01-31"
-    gemini_model="2.5-pro"
+    gemini_model="2.5-flash"
     
     if args.use_model=="gemini":
-        translator=GeminiTranslator(use_model=gemini_model)
+        rate_limit = args.rate_limit if args.rate_limit is not None else 4
+        translator=GeminiTranslator(use_model=gemini_model, calls_per_minute=rate_limit)
         translator.translate_folder(save_folder,input_folder)
     elif args.use_model=="gpt":
-        translator=GPTTranslator(gpt_model)
+        rate_limit = args.rate_limit if args.rate_limit is not None else 10
+        translator=GPTTranslator(gpt_model, calls_per_minute=rate_limit)
         asyncio.run(translator.translate_folder(save_folder, input_folder))
