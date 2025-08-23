@@ -27,15 +27,18 @@ class E2ETranslator:
     def __init__(self, 
                  model_type: str, 
                  target_folder: Path,
-                 rate_limit: int = 5):
+                 rate_limit: int = 5,
+                 gemini_model: str = "2.5-flash"):
         """
         Args:
             model_type: 使用するモデル ("gemini" or "gpt")
             target_folder: 処理対象のフォルダ (data/input以下)
             rate_limit: Gemini使用時のレート制限
+            gemini_model: Geminiモデルの種類 ("2.5-flash" or "2.5-pro")
         """
         self.model_type = model_type
         self.rate_limit = rate_limit
+        self.gemini_model = gemini_model
         
         # パス設定
         self.data_folder = Path(__file__).parent / "data"
@@ -48,7 +51,7 @@ class E2ETranslator:
         # 翻訳器を初期化
         if model_type == "gemini":
             self.translator = GeminiTranslator(
-                use_model="2.5-flash", 
+                use_model=gemini_model, 
                 calls_per_minute=rate_limit
             )
         elif model_type == "gpt":
@@ -176,10 +179,13 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 使用例:
-  # 単一ファイルを翻訳
+  # 単一ファイルを翻訳 (gemini-2.5-flash使用)
   python e2e_translation.py -M gemini -F my_folder --input-file document.docx
   
-  # フォルダ内の全DOCXファイルを翻訳
+  # 単一ファイルを翻訳 (gemini-2.5-pro使用)
+  python e2e_translation.py -M gemini -G 2.5-pro -F my_folder --input-file document.docx
+  
+  # フォルダ内の全DOCXファイルを翻訳 (GPT使用)
   python e2e_translation.py -M gpt -F my_folder --all-docx
   
   # 翻訳後に中間ファイルを削除
@@ -193,6 +199,13 @@ def main():
         required=True, 
         choices=["gemini", "gpt"],
         help="使用する翻訳モデル"
+    )
+    parser.add_argument(
+        "-G", "--gemini_model", 
+        type=str, 
+        choices=["2.5-flash", "2.5-pro"],
+        default="2.5-flash",
+        help="Geminiモデルの種類 (デフォルト: 2.5-flash)"
     )
     parser.add_argument(
         "-F", "--target_data_folder", 
@@ -240,7 +253,8 @@ def main():
         e2e_translator = E2ETranslator(
             model_type=args.use_model,
             target_folder=args.target_data_folder,
-            rate_limit=args.rate_limit
+            rate_limit=args.rate_limit,
+            gemini_model=args.gemini_model
         )
         
         # 翻訳実行
