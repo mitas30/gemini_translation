@@ -42,7 +42,7 @@ class GeminiTranslator:
         self.max_retries = max_retries
         self.initial_backoff = initial_backoff
 
-    def translate_folder(self, save_folder: Path, input_folder: Path, token_threshold: int = 15000, split_words: int = 10000):
+    def translate_folder(self, save_folder: Path, input_folder: Path, token_threshold: int = 10000, split_words: int = 5000):
         """
         input_folder 以下の Markdown ファイルを同期的に1つずつ翻訳し、save_folder 以下に保存する。
         ファイルサイズが大きい場合は内容を分割し、そのセグメントのみを並列で翻訳処理を行う。
@@ -68,7 +68,7 @@ class GeminiTranslator:
 
         print(f"{input_folder} 内の全ての翻訳が完了しました。")
 
-    def translate_single_file(self, input_md_path: Path, output_md_path: Path, token_threshold: int = 15000, split_words: int = 10000):
+    def translate_single_file(self, input_md_path: Path, output_md_path: Path, token_threshold: int = 10000, split_words: int = 5000):
         """
         単一のMarkdownファイルを翻訳する（E2E用）
         
@@ -257,7 +257,7 @@ class GPTTranslator:
         # レート制限のための設定（aiolimiter使用）
         self.rate_limiter = AsyncLimiter(calls_per_minute, 10)
         
-    async def translate_folder(self, save_folder: Path, input_folder: Path, * ,split_words: int = 10000):
+    async def translate_folder(self, save_folder: Path, input_folder: Path, * ,split_words: int = 5000):
         for input_md_path in input_folder.glob("*.md"):
             output_md_path = save_folder / input_md_path.name
             if output_md_path.exists():
@@ -291,7 +291,7 @@ class GPTTranslator:
                 
                 final_text = "\n\n----------\n\n".join(translated_segments)
             else:
-                with input_md_path.open("r", encoding="utf-8") as f:
+                with input_md_path.open("r", encPoding="utf-8") as f:
                     text = f.read()
                 final_text = await self.translate_text(0,text)
 
