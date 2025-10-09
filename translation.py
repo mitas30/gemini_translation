@@ -309,7 +309,7 @@ class GPTTranslator:
                 
                 final_text = "\n\n@@123456789_complete_translation@@\n\n".join(translated_segments)
             else:
-                with input_md_path.open("r", encoding="utf-8") as f:
+                with input_md_path.open("r", encPoding="utf-8") as f:
                     text = f.read()
                 final_text = await self.translate_text(0,text)
 
