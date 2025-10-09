@@ -182,8 +182,8 @@ def main():
   # 単一ファイルを翻訳 (gemini-2.5-flash使用)
   python e2e_translation.py -M gemini -F my_folder --input-file document.docx
   
-  # 単一ファイルを翻訳 (gemini-2.5-pro使用)
-  python e2e_translation.py -M gemini -G 2.5-pro -F my_folder --input-file document.docx
+  # 単一ファイルを翻訳 (gemini-2.5-pro使用 RPM=1)
+  python e2e_translation.py -M gemini -G 2.5-pro -R 1 -F my_folder --input-file document.docx
   
   # フォルダ内の全DOCXファイルを翻訳 (GPT使用)
   python e2e_translation.py -M gpt -F my_folder --all-docx

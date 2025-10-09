@@ -16,7 +16,7 @@ class GeminiTranslator:
     def __init__(self,
                  use_model: Literal["2.5-flash", "2.5-pro"],
                  calls_per_minute: int,*,
-                 max_retries: int = 3, initial_backoff: float = 2.0):
+                 max_retries: int = 5, initial_backoff: float = 2.0):
         """
         Args:
             use_model (Literal): 使用するモデルを選択します。
@@ -42,7 +42,7 @@ class GeminiTranslator:
         self.max_retries = max_retries
         self.initial_backoff = initial_backoff
 
-    def translate_folder(self, save_folder: Path, input_folder: Path, token_threshold: int = 15000, split_words: int = 10000):
+    def translate_folder(self, save_folder: Path, input_folder: Path, token_threshold: int = 10000, split_words: int = 5000):
         """
         input_folder 以下の Markdown ファイルを同期的に1つずつ翻訳し、save_folder 以下に保存する。
         ファイルサイズが大きい場合は内容を分割し、そのセグメントのみを並列で翻訳処理を行う。
@@ -68,7 +68,7 @@ class GeminiTranslator:
 
         print(f"{input_folder} 内の全ての翻訳が完了しました。")
 
-    def translate_single_file(self, input_md_path: Path, output_md_path: Path, token_threshold: int = 15000, split_words: int = 10000):
+    def translate_single_file(self, input_md_path: Path, output_md_path: Path, token_threshold: int = 10000, split_words: int = 5000):
         """
         単一のMarkdownファイルを翻訳する（E2E用）
         
@@ -113,15 +113,23 @@ class GeminiTranslator:
                     print(f"バッチ {i//batch_size + 1}: セグメント {i+1}-{min(i + batch_size, len(segments))} を処理中...")
                     
                     # バッチ内のセグメントを並列処理
-                    coros = [self.translate_text(idx, seg) for idx, seg in zip(batch_indices, batch)]
+                    # 各セグメントの実際の単語数に基づいて期待最小トークン数を計算（英語1word は 日本語1.2トークン以上 として計算）
+                    coros = []
+                    for idx, seg in zip(batch_indices, batch):
+                        seg_word_count = len(seg.split())
+                        expected_min_tokens = int(seg_word_count*1.0)  # 120%の変換率を期待値として設定
+                        coros.append(self.translate_text(idx, seg, expected_min_tokens))
                     batch_results = await asyncio.gather(*coros)
                     translated_segments.extend(batch_results)
                 
-                final_translated_text = "\n\n----------\n\n".join(translated_segments)
+                final_translated_text = "\n\n@@123456789_complete_translation@@\n\n".join(translated_segments)
             else:
                 with input_md_path.open("r", encoding="utf-8") as f:
                     text = f.read()
-                final_translated_text = await self.translate_text(0, text)
+                # 分割しない場合は、入力単語数の120%を期待値として設定
+                word_count = len(text.split())
+                expected_min_tokens = int(word_count * 1.2)
+                final_translated_text = await self.translate_text(0, text, expected_min_tokens)
 
             with output_md_path.open("w", encoding="utf-8") as f:
                 f.write(final_translated_text)
@@ -159,35 +167,32 @@ class GeminiTranslator:
         )
         return response.total_tokens
 
-    async def translate_text(self, seg_idx: int, input_md: str) -> str:
+    async def translate_text(self, seg_idx: int, input_md: str, expected_min_tokens: int = None) -> str:
         """
         単一のテキストセグメントを翻訳する。
 
         Args:
             seg_idx (int): セグメントのインデックス (ログ出力用)
             input_md (str): 翻訳対象のMarkdown文字列
+            expected_min_tokens (int, optional): 期待する最小出力トークン数。指定すると、これより少ない場合に再試行
 
         Returns:
             str: 翻訳されたテキスト
         """
         print(f"セグメント {seg_idx + 1} の翻訳を開始...")
-        translated_md, take_time, _, candidates_tokens = await self._translate(input_md)
+        translated_md, take_time, _, candidates_tokens = await self._translate(input_md, expected_min_tokens)
         print(f"セグメント {seg_idx + 1} の翻訳が完了。所要時間: {take_time:.2f}秒, 出力トークン数: {candidates_tokens}")
-        
-        # 出力トークン数の上限チェック
-        model_info = self.client.models.get(model=f'models/{self.model_name}')
-        if candidates_tokens >= model_info.output_token_limit:
-            raise ValueError(f"出力トークンがモデルの上限 ({model_info.output_token_limit}) に達している可能性があります。")
         
         return translated_md
     
-    async def _translate(self, text: str) -> tuple[str, float, int, int]:
+    async def _translate(self, text: str, expected_min_tokens: int = None) -> tuple[str, float, int, int]:
         """
         Gemini API を呼び出してテキストを翻訳する内部メソッド。
         エクスポネンシャル・バックオフによるリトライロジックを実装しています。
 
         Args:
             text (str): 翻訳対象のテキスト
+            expected_min_tokens (int, optional): 期待する最小出力トークン数。指定すると、これより少ない場合に再試行
 
         Returns:
             tuple[str, float, int, int]: (翻訳結果, 処理時間, 入力トークン数, 出力トークン数)
@@ -197,23 +202,36 @@ class GeminiTranslator:
             Exception: 予期しないその他のエラーが発生した場合。
         """
         prompt = (
-            "あなたは優れた翻訳者です。これから英語の長文を送るので、全文を自然な日本語に翻訳してください。\n"
-            "また、元のマークダウンと同じ構成を保って出力することを心がけてください。\n\n"
+            "あなたは優れた翻訳者で、もちろん与えられたすべての文章をサボることなく翻訳します。\n"
+            "これから英語の長文を送るので、全文を自然な日本語に翻訳してください。ただし、元の英語は出力しないで、翻訳文だけを出力してください。\n"
+            "また、元のマークダウンと同じ構成を保って出力することを心がけてください。私の指示に了解を示す必要はないので、すぐに翻訳を開始してください。\n\n"
             f"<翻訳対象>\n{text}"
         )
         
         last_exception = None
         
         # レート制限を適用
-        async with self.rate_limiter:
+        for attempt in range(self.max_retries):
             st = time.time()
-            for attempt in range(self.max_retries):
+            async with self.rate_limiter:
                 try:
                     # API呼び出しを実行
                     response = await self.client.aio.models.generate_content(model=self.model_name,contents=prompt)
                     translated_md = response.text
                     usage = response.usage_metadata
                     take_time = time.time() - st
+                    if usage.candidates_token_count is None:
+                        raise ValueError("candidates_token_count is None")
+                    
+                    # 出力トークン数の上限チェック
+                    model_info = self.client.models.get(model=f'models/{self.model_name}')
+                    if usage.candidates_token_count >= model_info.output_token_limit:
+                        raise ValueError(f"出力トークン数 ({usage.candidates_token_count}) がモデルの上限 ({model_info.output_token_limit}) に達している可能性があります。再試行します。")
+                    
+                    # 出力トークン数が期待値より少ない場合の再試行ロジック
+                    if expected_min_tokens is not None and usage.candidates_token_count < expected_min_tokens:
+                        raise ValueError(f"出力トークン数 ({usage.candidates_token_count}) が期待値 ({expected_min_tokens}) より少ないため再試行します。")
+                    
                     return translated_md, take_time, usage.prompt_token_count, usage.candidates_token_count
 
                 # 再試行が有効な可能性のある特定のエラーを捕捉
@@ -226,7 +244,7 @@ class GeminiTranslator:
                         jitter = random.uniform(0, backoff_duration * 0.1)
                         wait_time = backoff_duration + jitter
                         
-                        print(f"Gemini APIエラー (試行 {attempt + 1}/{self.max_retries})。 {wait_time:.2f}秒後に再試行します。エラー: {type(e).__name__}")
+                        print(f"Gemini APIエラー (試行 {attempt + 1}/{self.max_retries})。 {wait_time:.2f}秒後に再試行します。エラー: {e}")
                         await asyncio.sleep(wait_time)
                     else:
                         print(f"Gemini APIの呼び出しが{self.max_retries}回の試行の末、失敗しました。")
@@ -257,7 +275,7 @@ class GPTTranslator:
         # レート制限のための設定（aiolimiter使用）
         self.rate_limiter = AsyncLimiter(calls_per_minute, 10)
         
-    async def translate_folder(self, save_folder: Path, input_folder: Path, * ,split_words: int = 10000):
+    async def translate_folder(self, save_folder: Path, input_folder: Path, * ,split_words: int = 5000):
         for input_md_path in input_folder.glob("*.md"):
             output_md_path = save_folder / input_md_path.name
             if output_md_path.exists():
@@ -289,7 +307,7 @@ class GPTTranslator:
                     batch_results = await asyncio.gather(*coros)
                     translated_segments.extend(batch_results)
                 
-                final_text = "\n\n----------\n\n".join(translated_segments)
+                final_text = "\n\n@@123456789_complete_translation@@\n\n".join(translated_segments)
             else:
                 with input_md_path.open("r", encoding="utf-8") as f:
                     text = f.read()
@@ -301,7 +319,7 @@ class GPTTranslator:
 
         print(f"{input_folder} 内の全ての翻訳が完了しました。")
         
-    async def translate_single_file(self, input_md_path: Path, output_md_path: Path, split_words: int = 10000):
+    async def translate_single_file(self, input_md_path: Path, output_md_path: Path, split_words: int = 5000):
         """
         単一のMarkdownファイルを翻訳する（E2E用）
         
